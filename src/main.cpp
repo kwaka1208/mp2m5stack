@@ -3,9 +3,12 @@
 #define MODE_DEFAULT 0
 #define MODE_PATTERN 1
 
-// パターン定義: グー → チョキ → パー
-const String PATTERN[3]       = {"Closed_Fist", "Victory", "Open_Palm"};
-const String PATTERN_LABEL[3] = {"GU", "CHOKI", "PA"};
+// パターン定義: ここを編集して自由に変更できます
+// PATTERN: MediaPipe のジェスチャー名（送られてくる文字列）
+// PATTERN_LABEL: 画面に表示する短いラベル
+const String PATTERN[]       = {"Closed_Fist", "Victory", "Open_Palm"};
+const String PATTERN_LABEL[] = {"G", "C", "P"};
+const int    PATTERN_LEN     = sizeof(PATTERN) / sizeof(PATTERN[0]);
 
 int currentMode = MODE_DEFAULT;
 int patternStep = 0;
@@ -95,7 +98,7 @@ void showPatternProgress() {
   M5.Lcd.setCursor(10, 80);
   M5.Lcd.print("Pattern:            ");
   M5.Lcd.setCursor(10, 115);
-  for (int i = 0; i < 3; i++) {
+  for (int i = 0; i < PATTERN_LEN; i++) {
     if (i < patternStep) {
       M5.Lcd.setTextColor(GREEN, BLACK);
       M5.Lcd.print(PATTERN_LABEL[i]);
@@ -106,7 +109,7 @@ void showPatternProgress() {
       M5.Lcd.setTextColor(DARKGREY, BLACK);
       M5.Lcd.print("?");
     }
-    if (i < 2) {
+    if (i < PATTERN_LEN - 1) {
       M5.Lcd.setTextColor(WHITE, BLACK);
       M5.Lcd.print(">");
     }
@@ -117,7 +120,7 @@ void showPatternProgress() {
 void showPatternMode(String g) {
   if (g == PATTERN[patternStep]) {
     patternStep++;
-    if (patternStep == 3) {
+    if (patternStep == PATTERN_LEN) {
       // パターン完成
       M5.Lcd.fillScreen(BLACK);
       showModeLabel();
