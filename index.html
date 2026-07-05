@@ -71,6 +71,18 @@
 <body>
   <h1>MediaPipe 手ジェスチャー → M5Stack</h1>
 
+  <!-- カスタムモデル読み込み（任意） -->
+  <div class="card" style="margin-bottom: 16px;">
+    <strong>カスタムモデル（任意）</strong>
+    <p style="margin: 6px 0 8px 0; font-size: 13px; color: #475569;">
+      MediaPipe Model Maker で学習した <code>.task</code> ファイルを選択すると、独自ジェスチャーを認識できます。<br>
+      選択しない場合は MediaPipe の標準モデルを使います。
+    </p>
+    <input type="file" id="modelFile" accept=".task"
+           style="font-size: 14px; margin-right: 8px;" />
+    <div class="status" id="modelStatus">標準モデルを使用します</div>
+  </div>
+
   <div class="layout">
     <!-- 左カラム：STEP1（カメラ含む） -->
     <div class="col-left">
@@ -169,20 +181,34 @@
     let running = false;
     let lastVideoTime = -1;
     let serialPort = null, writer = null;
-    let lastSent = "";               // 直前に送った名前（連投を防ぐ）
-    const THRESHOLD = 0.60;          // この自信を超えたときだけ採用
+    let lastSent = "";
+    let customModelBuffer = null;
+    const THRESHOLD = 0.60;
 
-    // ---- MediaPipe を読み込む（学習不要・組み込みモデル） ----
+    // ---- カスタム .task ファイルの読み込み ----
+    document.getElementById("modelFile").addEventListener("change", async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      customModelBuffer = await file.arrayBuffer();
+      document.getElementById("modelStatus").textContent =
+        `カスタムモデル読み込み済み：${file.name}`;
+      recognizer = null; // カメラ再開時に再構築させる
+    });
+
+    // ---- MediaPipe を読み込む ----
     async function createRecognizer() {
       const vision = await FilesetResolver.forVisionTasks(
         "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm"
       );
+      const baseOptions = customModelBuffer
+        ? { modelAssetBuffer: new Uint8Array(customModelBuffer), delegate: "GPU" }
+        : {
+            modelAssetPath:
+              "https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task",
+            delegate: "GPU"
+          };
       recognizer = await GestureRecognizer.createFromOptions(vision, {
-        baseOptions: {
-          modelAssetPath:
-            "https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task",
-          delegate: "GPU"
-        },
+        baseOptions,
         runningMode: "VIDEO",
         numHands: 1
       });
