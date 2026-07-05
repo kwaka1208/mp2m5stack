@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<!--
+  ============================================================
+   IoT体験授業  MediaPipe版：手のジェスチャー → M5Stack（USB送信）
+  ============================================================
+   Teachable Machine のように「学習」する必要はありません。
+   MediaPipe が最初から手の形を見分けてくれます。
+
+   認識できる手の形（組み込み）:
+     Closed_Fist（グー）/ Open_Palm（パー）/ Victory（チョキ・ピース）
+     Pointing_Up（人差し指を上へ）/ Thumb_Up（いいね）/ Thumb_Down（だめ）
+     ILoveYou / None（手なし・不明）
+
+   使い方（学生）:
+     1. このページを Chrome か Edge で開く。
+        ※ file:// では カメラが動きません。ローカルサーバか https:// で開くこと。
+     2. 「カメラ開始」を押してカメラを許可。
+     3. 「M5Stackにつなぐ」で自分のM5Stackを選ぶ。
+     4. カメラに手をかざす。今の手の形が M5Stack に送られます。
+
+   先生向けメモ:
+     - Web Serial は Chrome / Edge のみ。
+     - PlatformIO / Arduino のシリアルモニタは閉じておくこと（ポートの取り合い防止）。
+     - M5Stack側スケッチ(lesson2-ai)の受信はそのまま使えます。ただし
+       クラス名が "Closed_Fist" などに変わるので、スケッチの★分岐も
+       それに合わせて書きかえること（下の「送られる名前」を参照）。
+     - 通信速度 115200。
+  ============================================================
+-->
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MediaPipe 手ジェスチャー → M5Stack</title>
+  <style>
+    body {
+      font-family: -apple-system, "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+      max-width: 1100px; margin: 0 auto; padding: 24px;
+      background: #f4f6f8; color: #1a2b3c; line-height: 1.6;
+    }
+    h1 { font-size: 20px; border-bottom: 3px solid #14b8a6; padding-bottom: 8px; margin-bottom: 16px; }
+    .layout {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      align-items: start;
+    }
+    .card { background: #fff; border-radius: 12px; padding: 16px; margin: 0 0 12px 0;
+            box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+    button { background: #14b8a6; color: #fff; border: none; border-radius: 8px;
+             padding: 12px 18px; font-size: 15px; font-weight: bold; cursor: pointer;
+             margin: 6px 4px 0 0; }
+    button.sub { background: #475569; }
+    button:disabled { background: #94a3b8; cursor: not-allowed; }
+    .status { font-size: 13px; color: #64748b; margin-top: 6px; }
+    .step { color: #14b8a6; font-weight: bold; }
+    #wrap { position: relative; width: 100%; margin: 8px auto; }
+    video, canvas.ov { width: 100%; border-radius: 10px; }
+    canvas.ov { position: absolute; left: 0; top: 0; }
+    .info-tbl { width:100%; border-collapse:collapse; font-size:12px; margin-top:10px; }
+    .info-tbl th { background:#f1f5f9; text-align:left; padding:3px 6px; font-weight:600; white-space:nowrap; }
+    .info-tbl td { padding:3px 6px; border-top:1px solid #e2e8f0; font-variant-numeric:tabular-nums; }
+    .info-tbl .sec-head td { background:#e0f2f1; font-weight:bold; color:#0f766e; border-top:2px solid #14b8a6; }
+    .info-tbl .num { color:#94a3b8; text-align:right; }
+    .info-tbl .val { text-align:right; }
+    @media (max-width: 640px) {
+      .layout { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <h1>MediaPipe 手ジェスチャー → M5Stack</h1>
+
+  <div class="layout">
+    <!-- 左カラム：STEP1（カメラ含む） -->
+    <div class="col-left">
+      <div class="card">
+        <label><span class="step">STEP 1.</span> カメラを開始</label><br />
+        <button id="camBtn">カメラ開始</button>
+        <div class="status" id="camStatus">まだ始めていません（読み込みに数秒かかります）</div>
+        <div id="wrap" style="margin-top: 12px;">
+          <video id="video" autoplay playsinline muted></video>
+          <canvas id="overlay" class="ov"></canvas>
+        </div>
+        <div id="info"></div>
+      </div>
+    </div>
+
+    <!-- 右カラム：STEP2＋情報 -->
+    <div class="col-right">
+      <div class="card">
+        <label><span class="step">STEP 2.</span> M5Stack をUSBでつなぐ</label><br />
+        <button id="connectBtn" class="sub">M5Stackにつなぐ</button>
+        <div class="status" id="serialStatus">まだつながっていません</div>
+      </div>
+
+      <div class="card">
+        <strong>認識できる手の形</strong>
+        <ul style="margin: 8px 0 0 0; padding-left: 20px; font-size: 14px; color: #475569;">
+          <li><code>Closed_Fist</code> — グー</li>
+          <li><code>Open_Palm</code> — パー</li>
+          <li><code>Victory</code> — チョキ・ピース</li>
+          <li><code>Pointing_Up</code> — 人差し指を上へ</li>
+          <li><code>Thumb_Up</code> — いいね（親指を上へ）</li>
+          <li><code>Thumb_Down</code> — 親指を下へ</li>
+          <li><code>ILoveYou</code> — 親指・人差し指・小指を立てる</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <strong>カメラ映像と左右判定のしくみ</strong>
+        <p style="margin: 8px 0 0 0; font-size: 14px; color: #475569;">
+          カメラから届く映像は<strong>左右反転のないそのままの映像</strong>です。ビデオ通話で自分の映像が鏡のように見えるのは、アプリが表示するときだけ反転をかけているからです。相手の画面には反転していない映像が届いています。
+        </p>
+        <p style="margin: 8px 0 0 0; font-size: 14px; color: #475569;">
+          このページの映像は<strong>「相手から見た自分」と同じ向き</strong>です。右手を上げると画面の右側に映り、座標の x も大きな値（右寄り）になります。データと画面の対応が直感的で一致しています。
+        </p>
+        <p style="margin: 8px 0 0 0; font-size: 14px; color: #475569;">
+          ただし MediaPipe の Left / Right 判定は、鏡のように反転した映像が届く前提で設計されています。そのため、このページでは MediaPipe の判定結果の Left と Right を入れ替えて表示しています。
+        </p>
+        <table style="width:100%;margin-top:8px;font-size:13px;border-collapse:collapse;">
+          <thead>
+            <tr style="background:#f1f5f9;">
+              <th style="padding:4px 8px;text-align:left;">実際の手</th>
+              <th style="padding:4px 8px;text-align:left;">画面での見え方</th>
+              <th style="padding:4px 8px;text-align:left;">このページの表示</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr style="border-top:1px solid #e2e8f0;">
+              <td style="padding:4px 8px;">右手</td>
+              <td style="padding:4px 8px;">画面の右側</td>
+              <td style="padding:4px 8px;color:#0f766e;font-weight:bold;">右手</td>
+            </tr>
+            <tr style="border-top:1px solid #e2e8f0;">
+              <td style="padding:4px 8px;">左手</td>
+              <td style="padding:4px 8px;">画面の左側</td>
+              <td style="padding:4px 8px;color:#0f766e;font-weight:bold;">左手</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <strong>MediaPipe とは？</strong>
+        <p style="margin: 8px 0 0 0; font-size: 14px; color: #475569;">
+          Google が開発したオープンソースのAIライブラリです。カメラ映像から手・顔・体の動きをリアルタイムで検出できます。このページでは MediaPipe の手ジェスチャー認識機能を使っており、事前学習済みのモデルが組み込まれているため、自分でAIを学習させる必要はありません。
+        </p>
+        <p style="margin: 8px 0 0 0; font-size: 14px;">
+          <a href="https://ai.google.dev/edge/mediapipe/solutions/vision/gesture_recognizer"
+             target="_blank" rel="noopener"
+             style="color: #14b8a6;">
+            MediaPipe 公式ドキュメント（手ジェスチャー認識）↗
+          </a>
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { GestureRecognizer, FilesetResolver, DrawingUtils }
+      from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0";
+
+    const video   = document.getElementById("video");
+    const overlay = document.getElementById("overlay");
+    const octx    = overlay.getContext("2d");
+
+    let recognizer = null;
+    let running = false;
+    let lastVideoTime = -1;
+    let serialPort = null, writer = null;
+    let lastSent = "";               // 直前に送った名前（連投を防ぐ）
+    const THRESHOLD = 0.60;          // この自信を超えたときだけ採用
+
+    // ---- MediaPipe を読み込む（学習不要・組み込みモデル） ----
+    async function createRecognizer() {
+      const vision = await FilesetResolver.forVisionTasks(
+        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm"
+      );
+      recognizer = await GestureRecognizer.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath:
+            "https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task",
+          delegate: "GPU"
+        },
+        runningMode: "VIDEO",
+        numHands: 1
+      });
+    }
+
+    // ---- STEP1: カメラ開始 ----
+    document.getElementById("camBtn").addEventListener("click", async () => {
+      setCam("MediaPipe を読み込み中...");
+      try {
+        if (!recognizer) await createRecognizer();
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        video.srcObject = stream;
+        await video.play();
+        overlay.width = video.videoWidth;
+        overlay.height = video.videoHeight;
+        running = true;
+        setCam("カメラOK！手をかざしてみよう");
+        requestAnimationFrame(loop);
+      } catch (e) {
+        setCam("カメラを開始できません（" + e.message + "）");
+      }
+    });
+
+    // ---- 毎フレーム：手を見て→ジェスチャー判定→送信 ----
+    function loop() {
+      if (!running) return;
+      if (video.currentTime !== lastVideoTime) {
+        lastVideoTime = video.currentTime;
+        const res = recognizer.recognizeForVideo(video, performance.now());
+        handleResult(res);
+      }
+      requestAnimationFrame(loop);
+    }
+
+    const drawing = new DrawingUtils(octx);
+
+    function handleResult(res) {
+      octx.clearRect(0, 0, overlay.width, overlay.height);
+
+      // 手の骨格を描く（見えると盛り上がる。触らなくてOK）
+      if (res.landmarks && res.landmarks.length > 0) {
+        for (const lm of res.landmarks) {
+          drawing.drawConnectors(lm, GestureRecognizer.HAND_CONNECTIONS,
+            { color: "#14b8a6", lineWidth: 3 });
+          drawing.drawLandmarks(lm, { color: "#dc2626", radius: 3 });
+        }
+      }
+
+      const LM_NAMES = [
+        'WRIST',
+        'THUMB_CMC','THUMB_MCP','THUMB_IP','THUMB_TIP',
+        'INDEX_MCP','INDEX_PIP','INDEX_DIP','INDEX_TIP',
+        'MIDDLE_MCP','MIDDLE_PIP','MIDDLE_DIP','MIDDLE_TIP',
+        'RING_MCP','RING_PIP','RING_DIP','RING_TIP',
+        'PINKY_MCP','PINKY_PIP','PINKY_DIP','PINKY_TIP'
+      ];
+
+      // --- 検出データを収集 ---
+      let name = "—", score = 0;
+      let side = "—", handScore = 0;
+      if (res.gestures?.length > 0) {
+        name  = res.gestures[0][0].categoryName;
+        score = res.gestures[0][0].score;
+      }
+      if (res.handednesses?.length > 0) {
+        const h = res.handednesses[0][0];
+        side      = h.categoryName === "Left" ? "右手" : "左手";
+        handScore = h.score;
+      }
+
+      // --- サマリーテーブル ---
+      let html = `<table class="info-tbl">
+        <tbody>
+          <tr class="sec-head"><td colspan="3">検出結果</td></tr>
+          <tr><th>ジェスチャー</th><td>${name}</td><td class="val">${score ? (score*100).toFixed(1)+"%" : ""}</td></tr>
+          <tr><th>手</th><td>${side}</td><td class="val">${handScore ? (handScore*100).toFixed(1)+"%" : ""}</td></tr>
+        </tbody>
+      </table>`;
+
+      // --- ランドマークテーブル ---
+      if (res.landmarks?.length > 0) {
+        const lm  = res.landmarks[0];
+        const wlm = res.worldLandmarks?.[0];
+        html += `<table class="info-tbl" style="margin-top:6px;">
+          <thead>
+            <tr class="sec-head"><td colspan="${wlm ? 8 : 5}">ランドマーク座標</td></tr>
+            <tr>
+              <th class="num">#</th><th>部位</th>
+              <th class="val">x</th><th class="val">y</th><th class="val">z</th>
+              ${wlm ? '<th class="val">X(m)</th><th class="val">Y(m)</th><th class="val">Z(m)</th>' : ''}
+            </tr>
+          </thead><tbody>`;
+        lm.forEach((p, i) => {
+          const w = wlm?.[i];
+          html += `<tr>
+            <td class="num">${i}</td><td>${LM_NAMES[i]}</td>
+            <td class="val">${p.x.toFixed(3)}</td>
+            <td class="val">${p.y.toFixed(3)}</td>
+            <td class="val">${p.z.toFixed(3)}</td>
+            ${w ? `<td class="val">${w.x.toFixed(3)}</td><td class="val">${w.y.toFixed(3)}</td><td class="val">${w.z.toFixed(3)}</td>` : ''}
+          </tr>`;
+        });
+        html += `</tbody></table>`;
+      } else {
+        html += `<p style="font-size:13px;color:#94a3b8;margin-top:8px;">手が検出されていません</p>`;
+      }
+
+      document.getElementById("info").innerHTML = html;
+
+      // --- 自信があって、前回と違う形なら M5Stack に送る ---
+      if (name !== "—" && name !== "None" && score >= THRESHOLD && name !== lastSent) {
+        lastSent = name;
+        sendToM5(name);
+      }
+    }
+
+    // ---- STEP2: M5Stack にUSB接続 ----
+    document.getElementById("connectBtn").addEventListener("click", async () => {
+      if (!("serial" in navigator)) {
+        setSerial("このブラウザはWeb Serial非対応。ChromeかEdgeで開いてください");
+        return;
+      }
+      try {
+        serialPort = await navigator.serial.requestPort();
+        await serialPort.open({ baudRate: 115200 });
+        writer = serialPort.writable.getWriter();
+        setSerial("つながりました！手の形が送られます");
+      } catch (e) {
+        setSerial("接続できませんでした（" + e.message + "）");
+      }
+    });
+
+    async function sendToM5(name) {
+      if (!writer) return;
+      try {
+        await writer.write(new TextEncoder().encode(name + "\n"));
+      } catch (e) {
+        setSerial("送信エラー：" + e.message);
+      }
+    }
+
+    function setCam(m)    { document.getElementById("camStatus").textContent = m; }
+    function setSerial(m) { document.getElementById("serialStatus").textContent = m; }
+  </script>
+</body>
+</html>
